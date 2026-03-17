@@ -2,29 +2,32 @@ php-version: "8.4"
 spc-version: "2.8.2"
 
 extensions:
-  - bcmath
-  - bz2
-  - ctype
-  - curl
-  - dom
-  - fileinfo
-  - filter
-  - gd
-  - iconv
-  - intl
-  - mbstring
-  - mbregex
-  - opcache
-  - openssl
-  - phar
-  - session
-  - simplexml
-  - sockets
-  - sodium
-  - tokenizer
-  - xml
-  - zip
-  - zlib
+  common:
+    - bcmath
+    - bz2
+    - ctype
+    - curl
+    - dom
+    - fileinfo
+    - filter
+    - gd
+    - iconv
+    - mbstring
+    - mbregex
+    - opcache
+    - openssl
+    - phar
+    - session
+    - simplexml
+    - sockets
+    - sodium
+    - tokenizer
+    - xml
+    - zip
+    - zlib
+
+  non_windows:
+    - intl
 
 libraries:
   - libjpeg
@@ -36,6 +39,5 @@ sapi:
   - cli
 
 package:
-  base-name: "static-php"
   include-cacert: true
   cacert-path: "cacert.pem"
