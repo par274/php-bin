@@ -19,7 +19,7 @@ jobs:
       spc_version: ${{ steps.cfg.outputs.spc_version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Read build config
         id: cfg
@@ -69,7 +69,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup system PHP
         uses: shivammathur/setup-php@v2
@@ -110,6 +110,8 @@ jobs:
 
       - name: Build PHP
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd static-php-cli
           SPC="./bin/spc"
@@ -131,7 +133,7 @@ jobs:
           [ -d "./static-php-cli/buildroot/license" ] && cp -r ./static-php-cli/buildroot/license/* package/LICENSES/ || true
 
           if [[ "${{ steps.cfg.outputs.include_ca }}" == "true" ]]; then
-            cp "${{ steps.cfg.outputs.cacert_path }}" package/cacert.pem || echo "cacert not found"
+            [ -f "${{ steps.cfg.outputs.cacert_path }}" ] && cp "${{ steps.cfg.outputs.cacert_path }}" package/cacert.pem
             printf "[PHP]\nexpose_php=Off\nmemory_limit=512M\ncurl.cainfo=../../common/cacert.pem\nopenssl.cafile=../../common/cacert.pem\n" > package/php.ini
           fi
 
@@ -167,17 +169,13 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
           mkdir -p common
-          
-          [ ! -d tmp-artifacts ] && echo "Hiç artifact bulunamadı." && exit 0
+          [ ! -d tmp-artifacts ] && exit 0
 
           for dir in tmp-artifacts/php-bin-*; do
             [ ! -d "$dir" ] && continue
-
             PLATFORM=$(basename "$dir" | sed 's/php-bin-//')
-            echo "Processing successful build for $PLATFORM..."
             
             mkdir -p "bin/$PLATFORM" "build-meta/$PLATFORM" "licenses/$PLATFORM"
-            
             cp -r "$dir/bin/"* "bin/$PLATFORM/"
             cp -r "$dir/meta/"* "build-meta/$PLATFORM/"
             cp -r "$dir/LICENSES/"* "licenses/$PLATFORM/" 2>/dev/null || true
@@ -190,6 +188,6 @@ jobs:
           
           git add bin/ build-meta/ licenses/ common/
           if ! git diff --staged --quiet; then
-            git commit -m "chore: update static php binaries (partial success)"
+            git commit -m "chore: update static php binaries (partial/full update)"
             git push origin main
           fi
