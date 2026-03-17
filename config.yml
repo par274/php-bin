@@ -1,5 +1,5 @@
 php-version: "8.4"
-spc-version: "2.8.2"
+spc-version: "2.7.1"
 
 extensions:
   common:
@@ -12,6 +12,7 @@ extensions:
     - filter
     - gd
     - iconv
+    - intl
     - mbstring
     - mbregex
     - opcache
@@ -25,27 +26,11 @@ extensions:
     - xml
     - zip
     - zlib
-  non_windows:
-    - intl
 
 libraries:
-  - zlib
-  - bzip2
-  - openssl
-  - libssh2
-  - libiconv-win
-  - libxml2
-  - nghttp2
-  - curl
-  - libpng
-  - libavif
+  - freetype
   - libwebp
   - libjpeg
-  - freetype
-  - onig
-  - libsodium
-  - xz
-  - libzip
 
 sapi:
   - cli
