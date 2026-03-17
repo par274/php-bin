@@ -77,18 +77,27 @@ jobs:
 
             php_version = cfg.fetch("php-version").to_s
             spc_version = cfg.fetch("spc-version").to_s
-            extensions  = Array(cfg["extensions"]).join(",")
+
+            ext_cfg = cfg.fetch("extensions", {})
+            common = Array(ext_cfg["common"])
+            non_windows = Array(ext_cfg["non_windows"])
+
+            extensions =
+              if "${{ matrix.os }}" == "windows-latest"
+                common
+              else
+                common + non_windows
+              end
+
             libraries   = Array(cfg["libraries"]).join(",")
-            base_name   = cfg.fetch("package", {}).fetch("base-name", "static-php").to_s
             cacert_path = cfg.fetch("package", {}).fetch("cacert-path", "cacert.pem").to_s
             include_ca  = cfg.fetch("package", {}).fetch("include-cacert", true) ? "true" : "false"
 
             File.open(ENV["GITHUB_OUTPUT"], "a") do |f|
               f.puts "php_version=#{php_version}"
               f.puts "spc_version=#{spc_version}"
-              f.puts "extensions=#{extensions}"
+              f.puts "extensions=#{extensions.join(",")}"
               f.puts "libraries=#{libraries}"
-              f.puts "base_name=#{base_name}"
               f.puts "cacert_path=#{cacert_path}"
               f.puts "include_cacert=#{include_ca}"
             end
@@ -100,7 +109,7 @@ jobs:
         run: |
           echo "SPC_BINARY=spc" >> "$GITHUB_ENV"
           echo "SPC_URL=https://github.com/crazywhalecc/static-php-cli/releases/download/${{ steps.cfg.outputs.spc_version }}/spc-${{ matrix.spc_url_suffix }}" >> "$GITHUB_ENV"
-          echo "PACKAGE_NAME=${{ steps.cfg.outputs.base_name }}-php-${{ steps.cfg.outputs.php_version }}-${{ matrix.artifact_os }}-${{ matrix.artifact_arch }}" >> "$GITHUB_ENV"
+          echo "PACKAGE_NAME=php-${{ steps.cfg.outputs.php_version }}-${{ matrix.artifact_os }}-${{ matrix.artifact_arch }}" >> "$GITHUB_ENV"
           echo "REPO_LICENSE_DIR=LICENSES/generated/${{ matrix.artifact_os }}-${{ matrix.artifact_arch }}" >> "$GITHUB_ENV"
 
       - name: Set SPC variables (Windows)
@@ -109,7 +118,7 @@ jobs:
         run: |
           "SPC_BINARY=spc.exe" >> $env:GITHUB_ENV
           "SPC_URL=https://github.com/crazywhalecc/static-php-cli/releases/download/${{ steps.cfg.outputs.spc_version }}/spc-${{ matrix.spc_url_suffix }}" >> $env:GITHUB_ENV
-          "PACKAGE_NAME=${{ steps.cfg.outputs.base_name }}-php-${{ steps.cfg.outputs.php_version }}-${{ matrix.artifact_os }}-${{ matrix.artifact_arch }}" >> $env:GITHUB_ENV
+          "PACKAGE_NAME=php-${{ steps.cfg.outputs.php_version }}-${{ matrix.artifact_os }}-${{ matrix.artifact_arch }}" >> $env:GITHUB_ENV
           "REPO_LICENSE_DIR=LICENSES/generated/${{ matrix.artifact_os }}-${{ matrix.artifact_arch }}" >> $env:GITHUB_ENV
 
       - name: Download SPC (Unix)
