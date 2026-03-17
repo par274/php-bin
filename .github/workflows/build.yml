@@ -23,6 +23,7 @@ jobs:
 
       - name: Read build config
         id: cfg
+        shell: bash
         run: |
           ruby -e '
             require "yaml"
@@ -77,23 +78,21 @@ jobs:
           php-version: 8.3
           tools: composer
           extensions: curl, openssl, mbstring, sodium, tokenizer, filter
+          ini-values: memory_limit=-1
 
-      - name: Read build config
+      - name: Read extension and library lists
         id: cfg
         shell: bash
         run: |
-          ruby -e '
-            require "yaml"
-            cfg = YAML.load_file("config.yml")
-            ext = ("${{ matrix.os }}" == "windows-latest") ? Array(cfg["extensions"]["common"]) : (Array(cfg["extensions"]["common"]) + Array(cfg["extensions"]["non_windows"]))
-            
-            File.open(ENV["GITHUB_OUTPUT"], "a") do |f|
-              f.puts "extensions=#{ext.join(",")}"
-              f.puts "libraries=#{Array(cfg["libraries"]).join(",")}"
-              f.puts "cacert_path=#{cfg.fetch("package", {})["cacert-path"] || "cacert.pem"}"
-              f.puts "include_ca=#{cfg.fetch("package", {})["include-cacert"] != false}"
-            end
-          '
+          EXTENSIONS=$(php -r "echo trim(file_get_contents('extensions.txt'));")
+          LIBRARIES=$(php -r "echo trim(file_get_contents('libs.txt'));")
+          EXT_HASH=$(php -r "echo md5(trim(file_get_contents('extensions.txt')));")
+
+          {
+            echo "extensions=$EXTENSIONS"
+            echo "libraries=$LIBRARIES"
+            echo "ext_hash=$EXT_HASH"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Download SPC
         shell: bash
@@ -108,6 +107,34 @@ jobs:
             chmod +x "static-php-cli/bin/spc"
           fi
 
+      - name: Cache SPC downloads
+        uses: actions/cache@v4
+        with:
+          path: static-php-cli/downloads
+          key: spc-downloads-${{ needs.meta.outputs.php_version }}-${{ steps.cfg.outputs.ext_hash }}-${{ runner.os }}-${{ matrix.artifact_arch }}
+
+      - name: SPC doctor
+        shell: bash
+        run: |
+          cd static-php-cli
+          SPC="./bin/spc"
+          [[ "${{ matrix.os }}" == "windows-latest" ]] && SPC="./bin/spc.exe"
+          $SPC doctor
+
+      - name: Download sources
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd static-php-cli
+          SPC="./bin/spc"
+          [[ "${{ matrix.os }}" == "windows-latest" ]] && SPC="./bin/spc.exe"
+
+          $SPC download \
+            --with-php=${{ needs.meta.outputs.php_version }} \
+            --for-extensions "${{ steps.cfg.outputs.extensions }}" \
+            --prefer-pre-built
+
       - name: Build PHP
         shell: bash
         env:
@@ -116,10 +143,11 @@ jobs:
           cd static-php-cli
           SPC="./bin/spc"
           [[ "${{ matrix.os }}" == "windows-latest" ]] && SPC="./bin/spc.exe"
-          
-          $SPC doctor
-          $SPC download --with-php=${{ needs.meta.outputs.php_version }} --for-extensions "${{ steps.cfg.outputs.extensions }}" --prefer-pre-built --debug
-          $SPC build --build-cli "${{ steps.cfg.outputs.extensions }}" --with-libs="${{ steps.cfg.outputs.libraries }}" --debug
+
+          $SPC build \
+            --build-cli "${{ steps.cfg.outputs.extensions }}" \
+            --with-libs="${{ steps.cfg.outputs.libraries }}" \
+            --debug
 
       - name: Prepare Package
         shell: bash
@@ -127,15 +155,10 @@ jobs:
           mkdir -p package/bin package/meta package/LICENSES
           EXE_EXT=""
           [[ "${{ matrix.os }}" == "windows-latest" ]] && EXE_EXT=".exe"
-          
-          cp ./static-php-cli/buildroot/bin/php${EXE_EXT} package/bin/
+
+          cp "./static-php-cli/buildroot/bin/php${EXE_EXT}" "package/bin/"
           cp ./static-php-cli/buildroot/build-*.json package/meta/
           [ -d "./static-php-cli/buildroot/license" ] && cp -r ./static-php-cli/buildroot/license/* package/LICENSES/ || true
-
-          if [[ "${{ steps.cfg.outputs.include_ca }}" == "true" ]]; then
-            [ -f "${{ steps.cfg.outputs.cacert_path }}" ] && cp "${{ steps.cfg.outputs.cacert_path }}" package/cacert.pem
-            printf "[PHP]\nexpose_php=Off\nmemory_limit=512M\ncurl.cainfo=../../common/cacert.pem\nopenssl.cafile=../../common/cacert.pem\n" > package/php.ini
-          fi
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
@@ -147,7 +170,7 @@ jobs:
   sync-repo:
     name: Sync to Repo
     needs: build
-    if: always() && !cancelled() && contains(needs.build.result, 'success')
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -164,29 +187,30 @@ jobs:
           path: tmp-artifacts
 
       - name: Organize
+        shell: bash
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          mkdir -p common
+
           [ ! -d tmp-artifacts ] && exit 0
+
+          found_any=0
 
           for dir in tmp-artifacts/php-bin-*; do
             [ ! -d "$dir" ] && continue
+            found_any=1
             PLATFORM=$(basename "$dir" | sed 's/php-bin-//')
-            
+
             mkdir -p "bin/$PLATFORM" "build-meta/$PLATFORM" "licenses/$PLATFORM"
-            cp -r "$dir/bin/"* "bin/$PLATFORM/"
-            cp -r "$dir/meta/"* "build-meta/$PLATFORM/"
-            cp -r "$dir/LICENSES/"* "licenses/$PLATFORM/" 2>/dev/null || true
-            
-            if [[ -f "$dir/cacert.pem" && ! -f "common/cacert.pem" ]]; then
-              cp "$dir/cacert.pem" "common/cacert.pem"
-              cp "$dir/php.ini" "common/php.ini"
-            fi
+
+            [ -d "$dir/bin" ] && cp -r "$dir/bin/"* "bin/$PLATFORM/" || true
+            [ -d "$dir/meta" ] && cp -r "$dir/meta/"* "build-meta/$PLATFORM/" || true
+            [ -d "$dir/LICENSES" ] && cp -r "$dir/LICENSES/"* "licenses/$PLATFORM/" 2>/dev/null || true
           done
-          
-          git add bin/ build-meta/ licenses/ common/
+
+          [ "$found_any" -eq 0 ] && exit 0
+
+          git add bin/ build-meta/ licenses/
           if ! git diff --staged --quiet; then
             git commit -m "chore: update static php binaries (partial/full update)"
             git push origin main
