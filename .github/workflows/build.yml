@@ -14,8 +14,48 @@ env:
   GITHUB_TOKEN: ${{ github.token }}
 
 jobs:
+  meta:
+    name: Prepare release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      php_version: ${{ steps.cfg.outputs.php_version }}
+      spc_version: ${{ steps.cfg.outputs.spc_version }}
+      release_tag: ${{ steps.rel.outputs.release_tag }}
+      release_name: ${{ steps.rel.outputs.release_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Read build config
+        id: cfg
+        shell: bash
+        run: |
+          ruby -e '
+            require "yaml"
+            cfg = YAML.load_file("config.yml")
+            php_version = cfg.fetch("php-version").to_s
+            spc_version = cfg.fetch("spc-version").to_s
+
+            File.open(ENV["GITHUB_OUTPUT"], "a") do |f|
+              f.puts "php_version=#{php_version}"
+              f.puts "spc_version=#{spc_version}"
+            end
+          '
+
+      - name: Generate release info
+        id: rel
+        shell: bash
+        run: |
+          release_date="$(date -u +%Y%m%d)"
+          release_tag="php-${{ steps.cfg.outputs.php_version }}-${release_date}-run${{ github.run_number }}"
+          release_name="Static PHP ${{ steps.cfg.outputs.php_version }} (${release_date})"
+
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "release_name=$release_name" >> "$GITHUB_OUTPUT"
+
   build:
     name: ${{ matrix.os }} / ${{ matrix.label }}
+    needs: meta
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -110,7 +150,6 @@ jobs:
           echo "SPC_BINARY=spc" >> "$GITHUB_ENV"
           echo "SPC_URL=https://github.com/crazywhalecc/static-php-cli/releases/download/${{ steps.cfg.outputs.spc_version }}/spc-${{ matrix.spc_url_suffix }}" >> "$GITHUB_ENV"
           echo "PACKAGE_NAME=php-${{ steps.cfg.outputs.php_version }}-${{ matrix.artifact_os }}-${{ matrix.artifact_arch }}" >> "$GITHUB_ENV"
-          echo "REPO_LICENSE_DIR=LICENSES/generated/${{ matrix.artifact_os }}-${{ matrix.artifact_arch }}" >> "$GITHUB_ENV"
 
       - name: Set SPC variables (Windows)
         if: matrix.os == 'windows-latest'
@@ -119,7 +158,6 @@ jobs:
           "SPC_BINARY=spc.exe" >> $env:GITHUB_ENV
           "SPC_URL=https://github.com/crazywhalecc/static-php-cli/releases/download/${{ steps.cfg.outputs.spc_version }}/spc-${{ matrix.spc_url_suffix }}" >> $env:GITHUB_ENV
           "PACKAGE_NAME=php-${{ steps.cfg.outputs.php_version }}-${{ matrix.artifact_os }}-${{ matrix.artifact_arch }}" >> $env:GITHUB_ENV
-          "REPO_LICENSE_DIR=LICENSES/generated/${{ matrix.artifact_os }}-${{ matrix.artifact_arch }}" >> $env:GITHUB_ENV
 
       - name: Download SPC (Unix)
         if: matrix.os != 'windows-latest'
@@ -321,65 +359,6 @@ jobs:
           libraries=${{ steps.cfg.outputs.libraries }}
           EOF
 
-      - name: Sync generated licenses into repository (Unix)
-        if: matrix.os != 'windows-latest'
-        shell: bash
-        run: |
-          rm -rf "${REPO_LICENSE_DIR}"
-          mkdir -p "${REPO_LICENSE_DIR}"
-          if compgen -G "./static-php-cli/buildroot/license/*" > /dev/null; then
-            cp -R ./static-php-cli/buildroot/license/. "${REPO_LICENSE_DIR}/"
-          fi
-          cat > "${REPO_LICENSE_DIR}/BUILD-INFO.txt" <<EOF
-          php_version_requested=${{ steps.cfg.outputs.php_version }}
-          php_version_built=${{ steps.built.outputs.php_version_full }}
-          spc_version=${{ steps.cfg.outputs.spc_version }}
-          os=${{ matrix.artifact_os }}
-          arch=${{ matrix.artifact_arch }}
-          extensions=${{ steps.cfg.outputs.extensions }}
-          libraries=${{ steps.cfg.outputs.libraries }}
-          generated_by=GitHub Actions
-          EOF
-
-      - name: Sync generated licenses into repository (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          if (Test-Path "$env:REPO_LICENSE_DIR") {
-            Remove-Item "$env:REPO_LICENSE_DIR" -Recurse -Force
-          }
-          New-Item -ItemType Directory -Path "$env:REPO_LICENSE_DIR" -Force | Out-Null
-          if (Test-Path .\static-php-cli\buildroot\license) {
-            Copy-Item .\static-php-cli\buildroot\license\* "$env:REPO_LICENSE_DIR\" -Recurse -Force
-          }
-          @"
-          php_version_requested=${{ steps.cfg.outputs.php_version }}
-          php_version_built=${{ steps.built.outputs.php_version_full }}
-          spc_version=${{ steps.cfg.outputs.spc_version }}
-          os=${{ matrix.artifact_os }}
-          arch=${{ matrix.artifact_arch }}
-          extensions=${{ steps.cfg.outputs.extensions }}
-          libraries=${{ steps.cfg.outputs.libraries }}
-          generated_by=GitHub Actions
-          "@ | Out-File -FilePath "$env:REPO_LICENSE_DIR\BUILD-INFO.txt" -Encoding utf8
-
-      - name: Commit generated licenses to main
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git pull --rebase origin main
-          git add "${REPO_LICENSE_DIR}"
-
-          if git diff --cached --quiet; then
-            echo "No license changes to commit."
-            exit 0
-          fi
-
-          git commit -m "chore(licenses): update generated licenses for ${{ matrix.artifact_os }}-${{ matrix.artifact_arch }}"
-          git push origin HEAD:main
-
       - name: Create archive (Unix)
         if: matrix.os != 'windows-latest'
         shell: bash
@@ -400,4 +379,31 @@ jobs:
           path: ${{ env.PACKAGE_NAME }}.zip
           if-no-files-found: error
           retention-days: 30
- 
+
+  release:
+    name: Create GitHub release
+    needs:
+      - meta
+      - build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        shell: bash
+        run: |
+          ls -lah release-assets
+
+      - name: Create release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.meta.outputs.release_tag }}
+          name: ${{ needs.meta.outputs.release_name }}
+          generate_release_notes: true
+          files: |
+            release-assets/*.zip
