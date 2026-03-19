@@ -12,7 +12,7 @@ concurrency:
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  SPC_DIR: ${{ github.workspace }}/../static-php-cli
+  SPC_DIR: static-php-cli
 
 jobs:
   meta:
@@ -109,12 +109,18 @@ jobs:
           echo "SPC_DIR=$SPC_DIR"
           pwd
           ls -la
-          ls -la "$(dirname "$GITHUB_WORKSPACE")" || true
+          ls -la "$SPC_DIR" || true
+
+      - name: Ensure SPC directories
+        shell: bash
+        run: |
+          mkdir -p "$SPC_DIR/bin"
+          mkdir -p "$SPC_DIR/source/php-src"
+          mkdir -p "$SPC_DIR/downloads"
 
       - name: Download SPC
         shell: bash
         run: |
-          mkdir -p "$SPC_DIR/bin"
           SPC_URL="https://github.com/crazywhalecc/static-php-cli/releases/download/${{ needs.meta.outputs.spc_version }}/spc-${{ matrix.spc_url_suffix }}"
 
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
@@ -125,16 +131,10 @@ jobs:
             chmod +x "$SPC_DIR/bin/spc"
           fi
 
-      - name: Ensure SPC directories
-        shell: bash
-        run: |
-          mkdir -p "$SPC_DIR/source/php-src"
-          mkdir -p "$SPC_DIR/downloads"
-
       - name: Cache SPC downloads
         uses: actions/cache@v5
         with:
-          path: ${{ env.SPC_DIR }}/downloads
+          path: static-php-cli/downloads
           key: spc-downloads-${{ needs.meta.outputs.php_version }}-${{ steps.cfg.outputs.ext_hash }}-${{ runner.os }}-${{ matrix.artifact_arch }}
 
       - name: SPC doctor
@@ -149,7 +149,6 @@ jobs:
         shell: bash
         run: |
           cd "$SPC_DIR"
-          mkdir -p source/php-src downloads
 
           SPC="./bin/spc"
           [[ "${{ matrix.os }}" == "windows-latest" ]] && SPC="./bin/spc.exe"
@@ -163,7 +162,6 @@ jobs:
         shell: bash
         run: |
           cd "$SPC_DIR"
-          mkdir -p source/php-src
 
           SPC="./bin/spc"
           [[ "${{ matrix.os }}" == "windows-latest" ]] && SPC="./bin/spc.exe"
