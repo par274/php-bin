@@ -108,7 +108,7 @@ jobs:
           fi
 
       - name: Cache SPC downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: static-php-cli/downloads
           key: spc-downloads-${{ needs.meta.outputs.php_version }}-${{ steps.cfg.outputs.ext_hash }}-${{ runner.os }}-${{ matrix.artifact_arch }}
@@ -161,7 +161,7 @@ jobs:
           [ -d "./static-php-cli/buildroot/license" ] && cp -r ./static-php-cli/buildroot/license/* package/LICENSES/ || true
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: php-bin-${{ matrix.artifact_os }}-${{ matrix.artifact_arch }}
           path: package/
