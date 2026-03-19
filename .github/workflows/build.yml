@@ -12,7 +12,6 @@ concurrency:
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  SPC_DIR: static-php-cli
 
 jobs:
   meta:
@@ -76,9 +75,23 @@ jobs:
             artifact_os: win
             artifact_arch: x64
 
+    continue-on-error: true
+
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Set SPC binary name
+        shell: bash
+        run: echo "SPC_BINARY=spc" >> $GITHUB_ENV
+
+      - name: Set SPC URL
+        shell: bash
+        run: |
+          echo "SPC_URL=https://github.com/crazywhalecc/static-php-cli/releases/download/${{ needs.meta.outputs.spc_version }}/spc-${{ matrix.spc_url_suffix }}" >> $GITHUB_ENV
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            echo "SPC_BINARY=spc.exe" >> $GITHUB_ENV
+          fi
 
       - name: Setup system PHP
         uses: shivammathur/setup-php@v2
@@ -102,74 +115,64 @@ jobs:
             echo "ext_hash=$EXT_HASH"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Debug paths
-        shell: bash
-        run: |
-          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
-          echo "SPC_DIR=$SPC_DIR"
-          pwd
-          ls -la
-          ls -la "$SPC_DIR" || true
-
-      - name: Ensure SPC directories
-        shell: bash
-        run: |
-          mkdir -p "$SPC_DIR/bin"
-          mkdir -p "$SPC_DIR/source/php-src"
-          mkdir -p "$SPC_DIR/downloads"
-
       - name: Download SPC
         shell: bash
         run: |
-          SPC_URL="https://github.com/crazywhalecc/static-php-cli/releases/download/${{ needs.meta.outputs.spc_version }}/spc-${{ matrix.spc_url_suffix }}"
-
+          cd ..
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            curl -fsSL -o "$SPC_DIR/bin/spc.exe" "$SPC_URL"
+            curl -fsSL -o "${{ env.SPC_BINARY }}" "${{ env.SPC_URL }}"
           else
-            curl -fsSL -o "$SPC_DIR/bin/spc.tar.gz" "$SPC_URL"
-            tar -xzf "$SPC_DIR/bin/spc.tar.gz" -C "$SPC_DIR/bin"
-            chmod +x "$SPC_DIR/bin/spc"
+            curl -fsSL -o "${{ env.SPC_BINARY }}.tar.gz" "${{ env.SPC_URL }}"
+            tar -xzf "${{ env.SPC_BINARY }}.tar.gz"
           fi
+
+          chmod +x "${{ env.SPC_BINARY }}"
+          [ ! -d static-php-cli/bin ] && mkdir -p static-php-cli/bin
+          mv "${{ env.SPC_BINARY }}" static-php-cli/bin/
+
+      - name: Create working directories
+        shell: bash
+        run: |
+          cd ..
+          [ ! -d php-bin ] && mkdir -p php-bin
+          [ ! -d static-php-cli/downloads ] && mkdir -p static-php-cli/downloads
 
       - name: Cache SPC downloads
         uses: actions/cache@v5
         with:
-          path: static-php-cli/downloads
+          path: ../static-php-cli/downloads
           key: spc-downloads-${{ needs.meta.outputs.php_version }}-${{ steps.cfg.outputs.ext_hash }}-${{ runner.os }}-${{ matrix.artifact_arch }}
 
       - name: SPC doctor
         shell: bash
         run: |
-          cd "$SPC_DIR"
-          SPC="./bin/spc"
-          [[ "${{ matrix.os }}" == "windows-latest" ]] && SPC="./bin/spc.exe"
-          $SPC doctor
+          cd ../static-php-cli
+          ./bin/${{ env.SPC_BINARY }} doctor
+          cd ../php-bin
 
       - name: Download sources
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cd "$SPC_DIR"
-
-          SPC="./bin/spc"
-          [[ "${{ matrix.os }}" == "windows-latest" ]] && SPC="./bin/spc.exe"
-
-          $SPC download \
+          cd ../static-php-cli
+          ./bin/${{ env.SPC_BINARY }} download \
             --with-php=${{ needs.meta.outputs.php_version }} \
             --for-extensions "${{ steps.cfg.outputs.extensions }}" \
             --prefer-pre-built
+          cd ../php-bin
 
       - name: Build PHP
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cd "$SPC_DIR"
-
-          SPC="./bin/spc"
-          [[ "${{ matrix.os }}" == "windows-latest" ]] && SPC="./bin/spc.exe"
-
-          $SPC build \
+          cd ../static-php-cli
+          ./bin/${{ env.SPC_BINARY }} build \
             --build-cli "${{ steps.cfg.outputs.extensions }}" \
             --with-libs="${{ steps.cfg.outputs.libraries }}" \
             --debug
+          cd ../php-bin
 
       - name: Prepare Package
         shell: bash
@@ -178,9 +181,9 @@ jobs:
           EXE_EXT=""
           [[ "${{ matrix.os }}" == "windows-latest" ]] && EXE_EXT=".exe"
 
-          cp "$SPC_DIR/buildroot/bin/php${EXE_EXT}" "package/bin/"
-          cp "$SPC_DIR"/buildroot/build-*.json package/meta/
-          [ -d "$SPC_DIR/buildroot/license" ] && cp -r "$SPC_DIR"/buildroot/license/* package/LICENSES/ || true
+          cp "../static-php-cli/buildroot/bin/php${EXE_EXT}" "package/bin/"
+          cp ../static-php-cli/buildroot/build-*.json package/meta/
+          [ -d "../static-php-cli/buildroot/license" ] && cp -r ../static-php-cli/buildroot/license/* package/LICENSES/ || true
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v7
