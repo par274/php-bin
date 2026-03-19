@@ -131,13 +131,12 @@ jobs:
 
       - name: Download SPC (Windows)
         if: matrix.os == 'windows-latest'
-        shell: bash
+        shell: pwsh
         run: |
-          cd ..
-          curl -fsSL -o spc.exe "${{ env.SPC_URL }}"
-          chmod +x spc.exe
-          mkdir -p static-php-cli/bin
-          mv spc.exe static-php-cli/bin/
+          Set-Location ..
+          Invoke-WebRequest -Uri "${{ env.SPC_URL }}" -OutFile "spc.exe"
+          New-Item -ItemType Directory -Force -Path "static-php-cli\bin" | Out-Null
+          Move-Item "spc.exe" "static-php-cli\bin\spc.exe"
 
       - name: Create working directories
         shell: bash
@@ -147,33 +146,68 @@ jobs:
           mkdir -p static-php-cli/downloads
 
       - name: Cache SPC downloads
+        id: cache-downloads
         uses: actions/cache@v5
         with:
           path: ../static-php-cli/downloads
           key: spc-downloads-${{ needs.meta.outputs.php_version }}-${{ steps.cfg.outputs.ext_hash }}-${{ runner.os }}-${{ matrix.artifact_arch }}
 
-      - name: SPC doctor
+      - name: SPC doctor (Unix)
+        if: matrix.os != 'windows-latest'
         shell: bash
         run: |
           cd ../static-php-cli
-          ./bin/${{ env.SPC_BINARY }} doctor
+          ./bin/spc doctor
 
-      - name: Download sources
+      - name: SPC doctor (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Set-Location ..\static-php-cli
+          .\bin\spc.exe doctor
+
+      - name: Download sources (Unix)
+        if: matrix.os != 'windows-latest' && steps.cache-downloads.outputs.cache-hit != 'true'
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd ../static-php-cli
-          ./bin/${{ env.SPC_BINARY }} download \
+          ./bin/spc download \
             --with-php=${{ needs.meta.outputs.php_version }} \
             --for-extensions "${{ steps.cfg.outputs.extensions }}" \
             --prefer-pre-built
 
-      - name: Build PHP
+      - name: Download sources (Windows)
+        if: matrix.os == 'windows-latest' && steps.cache-downloads.outputs.cache-hit != 'true'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          Set-Location ..\static-php-cli
+          .\bin\spc.exe download `
+            --with-php=${{ needs.meta.outputs.php_version }} `
+            --for-extensions "${{ steps.cfg.outputs.extensions }}" `
+            --prefer-pre-built
+
+      - name: Build PHP (Unix)
+        if: matrix.os != 'windows-latest'
         shell: bash
         run: |
           cd ../static-php-cli
-          ./bin/${{ env.SPC_BINARY }} build \
+          ./bin/spc build \
             --build-cli "${{ steps.cfg.outputs.extensions }}" \
             --with-libs="${{ steps.cfg.outputs.libraries }}" \
+            --debug
+
+      - name: Build PHP (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Set-Location ..\static-php-cli
+          .\bin\spc.exe build `
+            --build-cli "${{ steps.cfg.outputs.extensions }}" `
+            --with-libs="${{ steps.cfg.outputs.libraries }}" `
             --debug
 
       - name: Prepare Package (Unix)
@@ -187,12 +221,14 @@ jobs:
 
       - name: Prepare Package (Windows)
         if: matrix.os == 'windows-latest'
-        shell: bash
+        shell: pwsh
         run: |
-          mkdir -p package/bin package/meta package/LICENSES
-          cp ../static-php-cli/buildroot/bin/php.exe package/bin/
-          cp ../static-php-cli/buildroot/build-*.json package/meta/ || true
-          [ -d ../static-php-cli/buildroot/license ] && cp -r ../static-php-cli/buildroot/license/* package/LICENSES/ || true
+          New-Item -ItemType Directory -Force -Path package\bin, package\meta, package\LICENSES | Out-Null
+          Copy-Item ..\static-php-cli\buildroot\bin\php.exe package\bin\
+          Copy-Item "..\static-php-cli\buildroot\build-*.json" package\meta\ -ErrorAction SilentlyContinue
+          if (Test-Path ..\static-php-cli\buildroot\license) {
+            Copy-Item "..\static-php-cli\buildroot\license\*" package\LICENSES\ -ErrorAction SilentlyContinue
+          }
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v7
