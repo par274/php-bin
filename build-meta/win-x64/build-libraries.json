@@ -6,6 +6,7 @@
     "bzip2",
     "zlib",
     "openssl",
+    "brotli",
     "libssh2",
     "libiconv-win",
     "libxml2",
